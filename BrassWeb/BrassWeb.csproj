@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- reuse the hotseat rules engine verbatim -->
+    <Compile Include="..\BrassGame\Data.cs" Link="Engine\Data.cs" />
+    <Compile Include="..\BrassGame\Game.cs" Link="Engine\Game.cs" />
+  </ItemGroup>
+</Project>

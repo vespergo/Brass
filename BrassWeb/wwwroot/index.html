@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brass: Birmingham</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #17171c; color: #ddd; }
+  button { background: #3a3a46; color: #ddd; border: 1px solid #555; border-radius: 4px;
+           padding: 6px 12px; cursor: pointer; font-size: 14px; }
+  button:hover:not(:disabled) { background: #4a4a58; }
+  button:disabled { opacity: .4; cursor: default; }
+  input { background: #26262e; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 8px; font-size: 15px; }
+  #screens > div { display: none; }
+  #screens > div.active { display: block; }
+  #screens > div#game.active { display: flex; }
+  .center { max-width: 480px; margin: 12vh auto; padding: 24px; background: #21212a; border-radius: 8px; }
+  h1 { font-size: 22px; margin-bottom: 16px; color: #d4b06a; }
+  #lobbyList label { display: block; padding: 6px 8px; border-bottom: 1px solid #333; cursor: pointer; }
+  #game { display: flex; height: 100vh; }
+  #boardWrap { flex: 1; display: flex; align-items: flex-start; justify-content: center; overflow: auto; }
+  canvas { display: block; }
+  #side { width: 380px; min-width: 380px; padding: 8px; background: #21212a; display: flex; flex-direction: column; gap: 8px; height: 100vh; }
+  #players { font-family: Consolas, monospace; font-size: 13px; white-space: pre; line-height: 1.5; }
+  #status { font-weight: 600; min-height: 40px; color: #d4b06a; }
+  #hand { border: 1px solid #444; border-radius: 4px; }
+  #hand div { padding: 5px 9px; border-bottom: 1px solid #333; cursor: pointer; }
+  #hand div.sel { background: #d4b06a; color: #111; font-weight: 600; }
+  #actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  #log { flex: 1; overflow-y: auto; font-size: 12px; border: 1px solid #444; border-radius: 4px; padding: 4px; }
+  #log div { border-bottom: 1px solid #2a2a33; padding: 2px 4px; }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
+  #modal.open { display: flex; }
+  #modalBox { background: #26262e; border-radius: 8px; padding: 18px; min-width: 380px; max-width: 520px; max-height: 80vh; overflow-y: auto; }
+  #modalBox h2 { font-size: 16px; margin-bottom: 12px; color: #d4b06a; }
+  #modalOpts button { display: block; width: 100%; text-align: left; margin-bottom: 5px; }
+  .err { color: #e07070; font-size: 13px; min-height: 18px; }
+  #matModal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
+  #matModal.open { display: flex; }
+  #matBox { background: #26262e; border-radius: 8px; padding: 12px; }
+  #matTabs { display: flex; gap: 5px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div id="screens">
+  <div id="nameScreen" class="active">
+    <div class="center">
+      <h1>Brass: Birmingham</h1>
+      <input id="nameInput" placeholder="Your name" maxlength="20" style="width:100%">
+      <div class="err" id="nameErr"></div>
+      <button id="btnJoin" style="margin-top:10px;width:100%">Enter lobby</button>
+    </div>
+  </div>
+
+  <div id="lobbyScreen">
+    <div class="center">
+      <h1>Lobby</h1>
+      <p style="margin-bottom:10px;font-size:14px;color:#999">Tick 2–4 players (including yourself) and start a game. Everyone else stays in the lobby.</p>
+      <div id="lobbyList" style="margin-bottom:12px"></div>
+      <div class="err" id="lobbyErr"></div>
+      <button id="btnStart" style="width:100%">Start game with selected players</button>
+    </div>
+  </div>
+
+  <div id="game">
+    <div id="side">
+      <div id="players"></div>
+      <div id="status"></div>
+      <div id="hand"></div>
+      <div id="actions">
+        <button data-act="build">Build</button><button data-act="network">Network</button>
+        <button data-act="sell">Sell</button><button data-act="develop">Develop</button>
+        <button data-act="loan">Loan</button><button data-act="scout">Scout</button>
+        <button data-act="pass">Pass</button><button data-act="cancel">Cancel</button>
+      </div>
+      <button id="btnMat">Player Mat</button>
+      <div class="err" id="gameErr"></div>
+      <div id="log"></div>
+      <button id="btnLeave" style="display:none">Return to lobby</button>
+    </div>
+    <div id="boardWrap"><canvas id="board"></canvas></div>
+  </div>
+</div>
+
+<div id="modal"><div id="modalBox">
+  <h2 id="modalPrompt"></h2>
+  <div id="modalOpts"></div>
+</div></div>
+
+<div id="matModal"><div id="matBox">
+  <div id="matTabs"></div>
+  <canvas id="matCanvas" width="800" height="640"></canvas>
+</div></div>
+
+<script src="signalr.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const colors = { Red: "#c82828", Yellow: "#dcb414", Purple: "#8c3caa", Gray: "#828282" };
+const indLetter = { Cotton: "Ct", Coal: "Co", Iron: "Ir", Manufacturer: "Mf", Pottery: "Po", Brewery: "Br" };
+
+let conn, map, state = null, myName = "";
+let mode = "idle";            // idle | build | network
+let buildOpts = [], netOpts = [], selCard = -1;
+const boardImg = new Image();
+boardImg.src = "img/main_board.jpg";
+boardImg.onload = () => draw();
+
+// lazily loaded board art (cubes, player portraits, VP/income markers)
+const artCache = {};
+function art(name) {
+  let img = artCache[name];
+  if (!img) {
+    img = artCache[name] = new Image();
+    img.src = "img/" + name;
+    img.onload = () => { draw(); if (matPlayer >= 0) drawMat(); };
+  }
+  return img.complete && img.naturalWidth ? img : null;
+}
+
+// board-space (2000x2000) positions, mirrored from BrassGame/MainForm.cs
+const coalMarketPos = [ // £1 (bottom) .. £7, two cube slots each
+  [[1683,1036],[1726,1036]], [[1684,974],[1726,974]], [[1684,915],[1725,916]],
+  [[1683,856],[1725,856]], [[1683,798],[1726,798]], [[1682,739],[1725,739]], [[1680,680],[1725,679]],
+];
+const ironMarketPos = [ // £1 (bottom) .. £5
+  [[1791,1035],[1834,1035]], [[1791,975],[1834,975]], [[1791,917],[1836,917]],
+  [[1791,858],[1836,857]], [[1791,798],[1834,800]],
+];
+const turnOrderPos = [[213,1338],[213,1494],[213,1655],[213,1816]];
+// VP/income track: 100 spaces clockwise around the border, space 0 at bottom-left
+const vpTrackPos = [
+  [42,1847],[42,1775],[42,1704],[42,1634],[42,1561],[42,1494],[43,1422],[42,1350],[42,1280],[42,1208],
+  [42,1136],[40,1055],[41,998],[42,915],[41,857],[41,772],[42,713],[41,632],[42,576],[42,490],
+  [42,433],[42,351],[42,294],[42,209],[41,153],[141,42],[197,44],[279,42],[336,42],[423,42],
+  [479,43],[585,43],[642,42],[698,42],[816,42],[870,42],[928,42],[1045,42],[1102,42],[1158,42],
+  [1272,40],[1329,42],[1387,42],[1508,42],[1567,42],[1623,44],[1735,42],[1793,42],[1850,42],[1957,176],
+  [1959,233],[1959,289],[1959,403],[1958,461],[1957,517],[1959,633],[1958,691],[1960,748],[1959,864],[1959,918],
+  [1959,976],[1958,1094],[1958,1150],[1957,1205],[1956,1262],[1957,1375],[1955,1429],[1957,1488],[1956,1544],[1958,1655],
+  [1958,1713],[1959,1766],[1959,1824],[1854,1957],[1799,1955],[1742,1957],[1685,1957],[1587,1958],[1531,1957],[1475,1955],
+  [1419,1956],[1321,1957],[1264,1955],[1208,1955],[1152,1956],[1059,1955],[1003,1955],[946,1955],[889,1955],[791,1956],
+  [736,1957],[678,1956],[624,1956],[522,1958],[465,1958],[409,1957],[353,1958],[258,1957],[202,1958],[144,1955],
+];
+
+function show(screen) {
+  for (const d of $("screens").children) d.classList.toggle("active", d.id === screen);
+}
+
+// ---------- connection ----------
+
+async function start() {
+  map = await (await fetch("api/map")).json();
+  conn = new signalR.HubConnectionBuilder().withUrl("hub").withAutomaticReconnect().build();
+
+  conn.on("joined", name => { myName = name; state = null; show("lobbyScreen"); });
+  conn.on("lobby", names => renderLobby(names));
+  conn.on("error", msg => { $("gameErr").textContent = msg; $("lobbyErr").textContent = msg; });
+  conn.on("log", line => addLog(line));
+  conn.on("logHistory", lines => { $("log").innerHTML = ""; lines.forEach(addLog); });
+  conn.on("state", s => { state = s; mode = "idle"; selCard = -1; show("game"); render(); });
+  conn.on("choice", (prompt, options) => showModal(prompt, options, i => conn.invoke("ChoiceReply", i)));
+
+  await conn.start();
+}
+
+$("btnJoin").onclick = async () => {
+  const name = $("nameInput").value.trim();
+  if (!name) { $("nameErr").textContent = "Enter a name."; return; }
+  await start().catch(e => { $("nameErr").textContent = "Cannot reach server: " + e; throw e; });
+  await conn.invoke("Join", name);
+};
+$("nameInput").addEventListener("keydown", e => { if (e.key === "Enter") $("btnJoin").click(); });
+
+function renderLobby(names) {
+  if (state) return; // in a game; ignore lobby updates
+  $("lobbyList").innerHTML = names.map(n =>
+    `<label><input type="checkbox" value="${n.replace(/"/g, "&quot;")}" ${n === myName ? "checked" : ""}> ${n}${n === myName ? " (you)" : ""}</label>`).join("")
+    || "<i>Nobody here yet</i>";
+}
+
+$("btnStart").onclick = () => {
+  const sel = [...document.querySelectorAll("#lobbyList input:checked")].map(c => c.value);
+  conn.invoke("StartGame", sel);
+};
+
+$("btnLeave").onclick = async () => { await conn.invoke("LeaveGame"); state = null; $("log").innerHTML = ""; };
+
+// ---------- modal ----------
+
+function showModal(prompt, options, cb) {
+  $("modalPrompt").textContent = prompt;
+  $("modalOpts").innerHTML = "";
+  options.forEach((o, i) => {
+    const b = document.createElement("button");
+    b.textContent = o;
+    b.onclick = () => { $("modal").classList.remove("open"); cb(i); };
+    $("modalOpts").appendChild(b);
+  });
+  $("modal").classList.add("open");
+}
+
+// ---------- side panel ----------
+
+function addLog(line) {
+  const d = document.createElement("div");
+  d.textContent = line;
+  $("log").appendChild(d);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+function render() {
+  if (!state) return;
+  const s = state;
+  $("players").innerHTML = "";
+  s.players.forEach(p => {
+    const d = document.createElement("div");
+    d.textContent = `${p.index === s.currentIndex ? "►" : " "} ${p.name.padEnd(12)} £${String(p.money).padEnd(3)} inc ${String(p.income).padEnd(3)} VP ${String(p.vp).padEnd(3)} 🂠${p.handCount}${p.connected ? "" : " (offline)"}`;
+    d.style.color = colors[p.color];
+    $("players").appendChild(d);
+  });
+  const info = document.createElement("div");
+  info.textContent = `  ${s.era} Era R${s.round}/${s.roundsPerEra}  Deck ${s.deck}  Coal £${s.coal.next}(${s.coal.count})  Iron £${s.iron.next}(${s.iron.count})`;
+  $("players").appendChild(info);
+
+  const myTurn = s.currentIndex === s.you && !s.gameOver;
+  $("status").textContent = s.gameOver ? "Game over!" :
+    myTurn ? (mode === "build" ? "Click a highlighted slot." :
+              mode === "network" ? "Click a highlighted link." :
+              `Your turn: ${s.actionsLeft} action${s.actionsLeft > 1 ? "s" : ""} left. Select a card, then an action.`) :
+    `Waiting for ${s.players.find(p => p.index === s.currentIndex).name}…`;
+
+  const hand = $("hand");
+  hand.innerHTML = "";
+  s.hand.forEach((c, i) => {
+    const d = document.createElement("div");
+    d.textContent = c;
+    d.className = i === selCard ? "sel" : "";
+    d.onclick = () => { selCard = i; render(); };
+    hand.appendChild(d);
+  });
+
+  for (const b of document.querySelectorAll("#actions button"))
+    b.disabled = !myTurn || (b.dataset.act === "cancel" ? mode === "idle" : mode !== "idle");
+  $("btnLeave").style.display = s.gameOver ? "block" : "none";
+  draw();
+}
+
+// ---------- actions ----------
+
+document.querySelectorAll("#actions button").forEach(b => b.onclick = () => doAction(b.dataset.act));
+
+function needCard() {
+  if (selCard < 0 || selCard >= state.hand.length) { $("gameErr").textContent = "Select a card first."; return true; }
+  $("gameErr").textContent = "";
+  return false;
+}
+
+async function doAction(act) {
+  if (!state || state.currentIndex !== state.you) return;
+  switch (act) {
+    case "cancel": mode = "idle"; render(); break;
+    case "build": {
+      if (needCard()) return;
+      buildOpts = await conn.invoke("GetBuildOptions", selCard);
+      if (!buildOpts.length) { $("gameErr").textContent = "No legal builds with that card."; return; }
+      mode = "build"; render(); break;
+    }
+    case "network": {
+      if (needCard()) return;
+      netOpts = await conn.invoke("GetNetworkOptions");
+      if (!netOpts.length) { $("gameErr").textContent = "No legal links (check money/coal)."; return; }
+      mode = "network"; render(); break;
+    }
+    case "sell": if (needCard()) return; conn.invoke("Sell", selCard); break;
+    case "develop": {
+      if (needCard()) return;
+      const opts = await conn.invoke("GetDevelopOptions");
+      if (!opts.length) { $("gameErr").textContent = "Cannot develop (tiles/iron money)."; return; }
+      showModal("Develop: remove which tile? (1 iron each)", [...opts, "Cancel"],
+        i => { if (i < opts.length) conn.invoke("Develop", selCard, i); });
+      break;
+    }
+    case "loan":
+      if (needCard()) return;
+      showModal("Take a £30 loan (-3 income levels)?", ["Yes", "No"],
+        i => { if (i === 0) conn.invoke("Loan", selCard); });
+      break;
+    case "scout": {
+      if (needCard()) return;
+      const rest = state.hand.map((c, i) => ({ c, i })).filter(x => x.i !== selCard);
+      showModal("Scout: discard 1st extra card", [...rest.map(x => x.c), "Cancel"], a => {
+        if (a >= rest.length) return;
+        const rest2 = rest.filter((_, j) => j !== a);
+        showModal("Scout: discard 2nd extra card", [...rest2.map(x => x.c), "Cancel"], b => {
+          if (b >= rest2.length) return;
+          conn.invoke("Scout", selCard, rest[a].i, rest2[b].i);
+        });
+      });
+      break;
+    }
+    case "pass":
+      if (needCard()) return;
+      showModal("Discard selected card and pass?", ["Yes", "No"],
+        i => { if (i === 0) conn.invoke("Pass", selCard); });
+      break;
+  }
+}
+
+// ---------- board rendering ----------
+
+const cv = $("board"), ctx = cv.getContext("2d");
+let K = 0.5; // scale from 2000-space
+
+function fitCanvas() {
+  // ponytail: fixed 1000px (50% of 2000 native) — was collapsing to 300x150 default when wrap had no laid-out size at load
+  const size = 1000;
+  if (cv.width !== size) { cv.width = size; cv.height = size; }
+  K = size / 2000;
+}
+
+function slotRect(x, y) { const s = 88 * K; return [x * K - s / 2, y * K - s / 2, s, s]; }
+function linkRect(l) { const w = 64 * K, h = 40 * K; return [l.x * K - w / 2, l.y * K - h / 2, w, h]; }
+
+function draw() {
+  fitCanvas();
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (boardImg.complete) ctx.drawImage(boardImg, 0, 0, cv.width, cv.height);
+  if (!map) return;
+  const s = state;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+
+  for (const l of map.links) {
+    const placed = s && s.links.find(x => x.id === l.id);
+    const eraOk = s ? (s.era === "Canal" ? l.canal : l.rail) : true;
+    if (!placed && !eraOk) continue;
+    const [x, y, w, h] = linkRect(l);
+    ctx.beginPath(); ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, 7);
+    if (placed) {
+      ctx.fillStyle = colors[s.players.find(p => p.index === placed.owner).color];
+      ctx.fill(); ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = "#fff"; ctx.font = `bold ${13 * K * 2}px Segoe UI`;
+      ctx.fillText(s.era === "Canal" ? "C" : (l.canal && !l.rail ? "C" : "R"), x + w / 2, y + h / 2);
+    } else {
+      ctx.fillStyle = "rgba(255,255,255,.25)"; ctx.fill();
+    }
+    if (mode === "network" && netOpts.includes(l.id)) {
+      ctx.strokeStyle = "gold"; ctx.lineWidth = 3.5; ctx.stroke();
+    }
+  }
+
+  for (const loc of map.locations)
+    loc.slots.forEach((slot, si) => {
+      const [x, y, w, h] = slotRect(slot.x, slot.y);
+      const t = s && s.tiles.find(tt => tt.loc === loc.name && tt.slot === si);
+      if (t) {
+        const color = s.players.find(p => p.index === t.owner).color;
+        const img = art(`${color}_${indFile[t.ind]}_${t.level}${t.flipped ? "_back" : ""}.jpg`);
+        if (img) ctx.drawImage(img, x, y, w, h);
+        else {
+          ctx.fillStyle = colors[color];
+          ctx.fillRect(x, y, w, h);
+          if (t.flipped) { ctx.fillStyle = "rgba(15,15,15,.8)"; ctx.fillRect(x, y, w, h / 2.6); }
+          ctx.fillStyle = "#fff"; ctx.font = `bold ${15 * K * 2}px Segoe UI`;
+          ctx.fillText(indLetter[t.ind] + t.level, x + w / 2, y + h / 2);
+        }
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.strokeRect(x, y, w, h);
+        if (t.cubes > 0) {
+          ctx.fillStyle = t.ind === "Brewery" ? "orange" : "cyan";
+          ctx.font = `bold ${11 * K * 2}px Segoe UI`;
+          ctx.fillText(t.cubes, x + w - 9 * K * 2, y + h - 9 * K * 2);
+        }
+      } else {
+        ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
+      }
+      if (mode === "build" && buildOpts.some(o => o.loc === loc.name && o.slot === si)) {
+        ctx.strokeStyle = "gold"; ctx.lineWidth = 3.5; ctx.strokeRect(x, y, w, h);
+      }
+    });
+
+  if (s)
+    for (const m of s.merchants) {
+      const [x, y, w, h] = slotRect(m.x, m.y);
+      ctx.fillStyle = "rgba(60,50,40,.92)"; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = "gold"; ctx.lineWidth = 1; ctx.strokeRect(x, y, w, h);
+      const mi = art(`Merchant_${m.good}.png`);
+      if (mi) ctx.drawImage(mi, x, y, w, h);
+      else {
+        ctx.fillStyle = "gold"; ctx.font = `bold ${11 * K * 2}px Segoe UI`;
+        ctx.fillText({ Blank: "—", Any: "ANY", Cotton: "COT", Manufacturer: "MAN", Pottery: "POT" }[m.good], x + w / 2, y + h / 2);
+      }
+      if (m.beer) {
+        ctx.fillStyle = "orange";
+        ctx.beginPath(); ctx.arc(x + w - 7 * K * 2, y + 7 * K * 2, 6 * K * 2, 0, 7); ctx.fill();
+      }
+    }
+
+  if (s) drawTracks(s);
+}
+
+function drawTracks(s) {
+  // coal / iron market cubes
+  for (const [posTable, mkt, name] of [[coalMarketPos, s.coalMkt, "coal_cube.png"], [ironMarketPos, s.ironMkt, "iron_cube.png"]]) {
+    const cube = art(name), cs = 40 * K;
+    for (let pr = 1; pr < mkt.length; pr++)
+      for (let i = 0; i < mkt[pr]; i++) {
+        const [bx, by] = posTable[pr - 1][i];
+        if (cube) ctx.drawImage(cube, bx * K - cs / 2, by * K - cs / 2, cs, cs);
+        else { ctx.fillStyle = name.startsWith("coal") ? "#222" : "#e8952f"; ctx.fillRect(bx * K - cs / 2, by * K - cs / 2, cs, cs); }
+      }
+  }
+
+  // turn-order track: portraits in play order, spent-this-round overlaid
+  const ps = 140 * K;
+  s.players.forEach((p, i) => {
+    const [bx, by] = turnOrderPos[i];
+    const x = bx * K - ps / 2, y = by * K - ps / 2;
+    const img = art(`Player_${p.color}.png`);
+    if (img) ctx.drawImage(img, x, y, ps, ps);
+    else { ctx.fillStyle = colors[p.color]; ctx.fillRect(x, y, ps, ps); }
+    ctx.strokeStyle = p.index === s.currentIndex ? "gold" : "#000";
+    ctx.lineWidth = p.index === s.currentIndex ? 3 : 1;
+    ctx.strokeRect(x, y, ps, ps);
+    const label = "£" + p.spent, lh = 15 * K * 2;
+    ctx.fillStyle = "rgba(0,0,0,.67)"; ctx.fillRect(x, y + ps - lh, ps, lh);
+    ctx.fillStyle = "gold"; ctx.font = `bold ${11 * K * 2}px Segoe UI`;
+    ctx.fillText(label, x + ps / 2, y + ps - lh / 2);
+  });
+
+  // VP + income markers share the border track; offset within a space when tied
+  const vs = 44 * K;
+  for (const [keyOf, imgOf] of [
+    [p => ((p.vp % 100) + 100) % 100, p => `Player_${p.color}_Point.png`],
+    [p => p.incomeSpace, p => `${p.color}_Income.png`],
+  ]) {
+    const groups = {};
+    for (const p of s.players) (groups[keyOf(p)] ??= []).push(p);
+    for (const [space, tied] of Object.entries(groups)) {
+      const [bx, by] = vpTrackPos[space];
+      tied.forEach((p, i) => {
+        const ox = (i % 2) * vs * .5 - (tied.length > 1 ? vs * .25 : 0);
+        const oy = Math.floor(i / 2) * vs * .5 - (tied.length > 2 ? vs * .25 : 0);
+        const x = bx * K + ox - vs / 2, y = by * K + oy - vs / 2;
+        const img = art(imgOf(p));
+        if (img) ctx.drawImage(img, x, y, vs, vs);
+        else { ctx.fillStyle = colors[p.color]; ctx.beginPath(); ctx.ellipse(x + vs / 2, y + vs / 2, vs / 2, vs / 2, 0, 0, 7); ctx.fill(); }
+      });
+    }
+  }
+}
+
+// ---------- player mat ----------
+
+const indFile = { Cotton: "Cotton", Coal: "Coal", Iron: "Iron", Manufacturer: "Manufacture", Pottery: "Pottery", Brewery: "Beer" };
+let matPlayer = -1; // player index shown in the mat modal, -1 = closed
+const matCv = $("matCanvas"), matCtx = matCv.getContext("2d");
+
+$("btnMat").onclick = () => { if (state) { matPlayer = state.you >= 0 ? state.you : state.players[0].index; drawMat(); $("matModal").classList.add("open"); } };
+$("matModal").onclick = e => { if (e.target.id === "matModal") { matPlayer = -1; $("matModal").classList.remove("open"); } };
+
+function drawMat() {
+  if (!state || matPlayer < 0) return;
+  const p = state.players.find(x => x.index === matPlayer);
+  $("matTabs").innerHTML = state.players.map(x =>
+    `<button onclick="matPlayer=${x.index};drawMat()" ${x.index === matPlayer ? 'style="background:#d4b06a;color:#111"' : ""}>${x.name}</button>`).join("");
+  const km = matCv.width / 1000; // mat coords are in 1000x800 space
+  matCtx.clearRect(0, 0, matCv.width, matCv.height);
+  const mat = art("player_mat.jpg");
+  if (mat) matCtx.drawImage(mat, 0, 0, matCv.width, matCv.height);
+  const ts = 84 * km;
+  matCtx.textAlign = "right"; matCtx.textBaseline = "bottom";
+  for (const t of p.mat) {
+    const slot = map.matSlots.find(s => s.ind === t.ind && s.level === t.level);
+    if (!slot) continue;
+    const x = slot.x * km - ts / 2, y = slot.y * km - ts / 2;
+    const img = art(`${p.color}_${indFile[t.ind]}_${t.level}.jpg`);
+    if (img) matCtx.drawImage(img, x, y, ts, ts);
+    else { matCtx.fillStyle = colors[p.color]; matCtx.fillRect(x, y, ts, ts); }
+    if (t.count > 1) {
+      matCtx.fillStyle = "#fff"; matCtx.font = `bold ${12 * km}px Segoe UI`;
+      matCtx.fillText("×" + t.count, x + ts - 2, y + ts - 2);
+    }
+  }
+  matCtx.textAlign = "center"; matCtx.textBaseline = "middle";
+}
+
+cv.addEventListener("click", e => {
+  if (!state || state.currentIndex !== state.you) return;
+  const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  const hit = (x, y, w, h) => px >= x && px <= x + w && py >= y && py <= y + h;
+
+  if (mode === "build") {
+    for (const loc of map.locations)
+      for (let si = 0; si < loc.slots.length; si++) {
+        const opts = buildOpts.filter(o => o.loc === loc.name && o.slot === si);
+        if (!opts.length || !hit(...slotRect(loc.slots[si].x, loc.slots[si].y))) continue;
+        if (opts.length === 1) conn.invoke("Build", selCard, opts[0].i);
+        else showModal(`Build what in ${loc.name}?`, [...opts.map(o => o.label), "Cancel"],
+          i => { if (i < opts.length) conn.invoke("Build", selCard, opts[i].i); });
+        mode = "idle"; render();
+        return;
+      }
+  } else if (mode === "network") {
+    for (const l of map.links)
+      if (netOpts.includes(l.id) && hit(...linkRect(l))) {
+        conn.invoke("Network", selCard, l.id);
+        mode = "idle"; render();
+        return;
+      }
+  }
+});
+</script>
+</body>
+</html>
