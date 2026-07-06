@@ -69,6 +69,19 @@ public static class Data
         new(Industry.Brewery, 4, 1, 9, 0, 1, 10, 5, 0, 1, RailOnly: true),
     };
 
+    // VP a flipped industry contributes to each of its links at end-of-era scoring, by (Industry, Level).
+    // Level ordering starts at the lowest level of each industry's roster.
+    public static readonly Dictionary<(Industry, int), int> LinkPoints = new()
+    {
+        { (Industry.Coal, 1), 2 }, { (Industry.Coal, 2), 1 }, { (Industry.Coal, 3), 1 }, { (Industry.Coal, 4), 1 },
+        { (Industry.Iron, 1), 1 }, { (Industry.Iron, 2), 1 }, { (Industry.Iron, 3), 1 }, { (Industry.Iron, 4), 1 },
+        { (Industry.Pottery, 1), 1 }, { (Industry.Pottery, 2), 1 }, { (Industry.Pottery, 3), 1 }, { (Industry.Pottery, 4), 1 }, { (Industry.Pottery, 5), 1 },
+        { (Industry.Cotton, 1), 1 }, { (Industry.Cotton, 2), 2 }, { (Industry.Cotton, 3), 1 }, { (Industry.Cotton, 4), 1 },
+        { (Industry.Brewery, 1), 2 }, { (Industry.Brewery, 2), 2 }, { (Industry.Brewery, 3), 2 }, { (Industry.Brewery, 4), 2 },
+        { (Industry.Manufacturer, 1), 2 }, { (Industry.Manufacturer, 2), 1 }, { (Industry.Manufacturer, 3), 0 }, { (Industry.Manufacturer, 4), 1 },
+        { (Industry.Manufacturer, 5), 2 }, { (Industry.Manufacturer, 6), 1 }, { (Industry.Manufacturer, 7), 0 }, { (Industry.Manufacturer, 8), 1 },
+    };
+
     static Slot S(int x, int y, params Industry[] a) => new(x, y, a);
     const Industry Cot = Industry.Cotton, Co = Industry.Coal, Ir = Industry.Iron,
         Man = Industry.Manufacturer, Pot = Industry.Pottery, Br = Industry.Brewery;

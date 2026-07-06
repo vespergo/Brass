@@ -667,7 +667,8 @@ public class Game
         Log($"=== End of {Era} Era: scoring ===");
         foreach (var l in Links.ToList())
         {
-            int vp = l.Def.Locs.Sum(loc => Data.IsMerchant(loc) ? 2 : Tiles.Count(t => t.Loc == loc && t.Flipped));
+            int vp = l.Def.Locs.Sum(loc => Data.IsMerchant(loc) ? 2
+                : Tiles.Where(t => t.Loc == loc && t.Flipped).Sum(t => Data.LinkPoints.TryGetValue((t.Spec.Ind, t.Spec.Level), out var lp) ? lp : 0));
             l.Owner.VP += vp;
             Log($"{l.Owner.Name} scores {vp} VP for link {l.Def}");
         }
