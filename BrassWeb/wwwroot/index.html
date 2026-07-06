@@ -22,7 +22,7 @@
   #boardWrap { flex: 1; display: flex; align-items: flex-start; justify-content: center; overflow: auto; }
   canvas { display: block; }
   #side { width: 380px; min-width: 380px; padding: 8px; background: #21212a; display: flex; flex-direction: column; gap: 8px; height: 100vh; }
-  #players { font-family: Consolas, monospace; font-size: 13px; white-space: pre; line-height: 1.5; }
+  #players { font-family: Consolas, monospace; font-size: 15px; white-space: pre; line-height: 1.5; }
   #status { font-weight: 600; min-height: 40px; color: #d4b06a; }
   #hand { border: 1px solid #444; border-radius: 4px; }
   #hand div { padding: 5px 9px; border-bottom: 1px solid #333; cursor: pointer; }
@@ -103,6 +103,7 @@ const indLetter = { Cotton: "Ct", Coal: "Co", Iron: "Ir", Manufacturer: "Mf", Po
 let conn, map, state = null, myName = "";
 let mode = "idle";            // idle | build | network
 let buildOpts = [], netOpts = [], selCard = -1;
+let roundKey = null, banner = null; // {round, era, until}
 const boardImg = new Image();
 boardImg.src = "img/main_board.jpg";
 boardImg.onload = () => draw();
@@ -212,6 +213,12 @@ function addLog(line) {
 function render() {
   if (!state) return;
   const s = state;
+  const key = s.era + "|" + s.round;
+  if (key !== roundKey) {
+    roundKey = key;
+    banner = { round: s.round, era: s.era, until: Date.now() + 2000 };
+    setTimeout(() => { banner = null; draw(); }, 3000);
+  }
   $("players").innerHTML = "";
   s.players.forEach(p => {
     const d = document.createElement("div");
@@ -314,7 +321,7 @@ let K = 0.5; // scale from 2000-space
 
 function fitCanvas() {
   // ponytail: fixed 1000px (50% of 2000 native) — was collapsing to 300x150 default when wrap had no laid-out size at load
-  const size = 1000;
+  const size = 1100;
   if (cv.width !== size) { cv.width = size; cv.height = size; }
   K = size / 2000;
 }
@@ -366,8 +373,10 @@ function draw() {
         }
         ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.strokeRect(x, y, w, h);
         if (t.cubes > 0) {
-          ctx.fillStyle = t.ind === "Brewery" ? "orange" : "cyan";
-          ctx.font = `bold ${11 * K * 2}px Segoe UI`;
+          ctx.font = `bold ${11 * K * 3}px Segoe UI`;
+          ctx.strokeStyle = "black"; ctx.lineWidth = 3;
+          ctx.strokeText(t.cubes, x + w - 9 * K * 2, y + h - 9 * K * 2);
+          ctx.fillStyle = "white";
           ctx.fillText(t.cubes, x + w - 9 * K * 2, y + h - 9 * K * 2);
         }
       } else {
@@ -396,6 +405,22 @@ function draw() {
     }
 
   if (s) drawTracks(s);
+
+  if (banner && Date.now() < banner.until) {
+    const cx = cv.width / 2, cy = cv.height / 2;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.font = `bold ${48 * K * 2}px Segoe UI`;
+    ctx.lineWidth = 8; ctx.strokeStyle = "black";
+    ctx.strokeText(`Round ${banner.round}`, cx, cy - 20 * K * 2);
+    ctx.fillStyle = "white";
+    ctx.fillText(`Round ${banner.round}`, cx, cy - 20 * K * 2);
+
+    ctx.font = `bold ${24 * K * 2}px Segoe UI`;
+    ctx.lineWidth = 5;
+    ctx.strokeText(`${banner.era} Era`, cx, cy + 24 * K * 2);
+    ctx.fillText(`${banner.era} Era`, cx, cy + 24 * K * 2);
+  }
 }
 
 function drawTracks(s) {
@@ -423,7 +448,7 @@ function drawTracks(s) {
     ctx.strokeRect(x, y, ps, ps);
     const label = "£" + p.spent, lh = 15 * K * 2;
     ctx.fillStyle = "rgba(0,0,0,.67)"; ctx.fillRect(x, y + ps - lh, ps, lh);
-    ctx.fillStyle = "gold"; ctx.font = `bold ${11 * K * 2}px Segoe UI`;
+    ctx.fillStyle = "gold"; ctx.font = `bold ${22 * K * 2}px Segoe UI`;
     ctx.fillText(label, x + ps / 2, y + ps - lh / 2);
   });
 
