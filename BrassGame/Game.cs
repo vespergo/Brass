@@ -689,6 +689,7 @@ public class Game
             foreach (var p in Players)
             {
                 p.Hand.Clear();
+                p.LinksLeft = 14;   // ponytail: rail era gets its own 14-link budget, distinct from canal era
                 for (int i = 0; i < 8; i++) DrawTo(p);
             }
             Era = Era.Rail;
