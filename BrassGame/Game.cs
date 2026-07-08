@@ -672,7 +672,6 @@ public class Game
             l.Owner.VP += vp;
             Log($"{l.Owner.Name} scores {vp} VP for link {l.Def}");
         }
-        Links.Clear();
         foreach (var t in Tiles.Where(t => t.Flipped))
         {
             t.Owner.VP += t.Spec.VP;
@@ -681,6 +680,7 @@ public class Game
 
         if (Era == Era.Canal)
         {
+            Links.Clear();   // board resets for the Rail era; rail-era links stay on at game end
             Tiles.RemoveAll(t => t.Spec.Level == 1);
             foreach (var m in MerchantSlots.Where(m => m.Good != Good.Blank)) m.HasBeer = true;
             Deck = Data.BuildDeck(PlayerCount);

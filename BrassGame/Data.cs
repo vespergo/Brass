@@ -148,6 +148,7 @@ public static class Data
         Canal("Burton","Walsall",1180,930),
         Both("Tamworth","Birmingham",1390,1175),
         Both("Tamworth","Nuneaton",1560,1043),
+        Rail("Tamworth","Walsall",1250,1100),
         Rail("Nuneaton","Birmingham",1425,1290),
         Rail("Nuneaton","Coventry",1717,1304),
         Both("Birmingham","Coventry",1430,1440),
@@ -165,7 +166,7 @@ public static class Data
         Both("Dudley","Wolverhampton",750,1220),
         Both("Wolverhampton","Walsall",900,1090),
         Both("Wolverhampton","Coalbrookdale",586,1070),
-        Both("Coalbrookdale","Shrewsbury",335,1076),
+        Both("Coalbrookdale","Shrewsbury",335,1076),        
     };
 
     // Location card counts at 2/3/4 players. Deck totals 40/54/64.
