@@ -101,8 +101,8 @@ const colors = { Red: "#c82828", Yellow: "#dcb414", Purple: "#8c3caa", Gray: "#8
 const indLetter = { Cotton: "Ct", Coal: "Co", Iron: "Ir", Manufacturer: "Mf", Pottery: "Po", Brewery: "Br" };
 
 let conn, map, state = null, myName = "";
-let mode = "idle";            // idle | build | network
-let buildOpts = [], netOpts = [], selCard = -1;
+let mode = "idle";            // idle | build | network | network2 | sell | sell2
+let buildOpts = [], netOpts = [], sellOpts = [], selCard = -1;
 let roundKey = null, banner = null; // {round, era, until}
 const boardImg = new Image();
 boardImg.src = "img/main_board.jpg";
@@ -161,6 +161,12 @@ async function start() {
   conn.on("logHistory", lines => { $("log").innerHTML = ""; lines.forEach(addLog); });
   conn.on("state", s => { state = s; mode = "idle"; selCard = -1; show("game"); render(); });
   conn.on("choice", (prompt, options) => showModal(prompt, options, i => conn.invoke("ChoiceReply", i)));
+  conn.on("networkPick", (prompt, linkIds) => {
+    netOpts = linkIds; mode = "network2"; render();
+  });
+  conn.on("sellPick", (options, st) => {
+    state = st; sellOpts = options; selCard = -1; mode = "sell2"; render();
+  });
 
   await conn.start();
 }
@@ -234,6 +240,9 @@ function render() {
   $("status").textContent = s.gameOver ? "Game over!" :
     myTurn ? (mode === "build" ? "Click a highlighted slot." :
               mode === "network" ? "Click a highlighted link." :
+              mode === "network2" ? "Click a highlighted link for your second rail, or Cancel to stop." :
+              mode === "sell" ? "Click a highlighted tile to sell." :
+              mode === "sell2" ? "Click another highlighted tile to sell, or Cancel to stop." :
               `Your turn: ${s.actionsLeft} action${s.actionsLeft > 1 ? "s" : ""} left. Select a card, then an action.`) :
     `Waiting for ${s.players.find(p => p.index === s.currentIndex).name}…`;
 
@@ -266,7 +275,9 @@ function needCard() {
 async function doAction(act) {
   if (!state || state.currentIndex !== state.you) return;
   switch (act) {
-    case "cancel": mode = "idle"; render(); break;
+    case "cancel":
+      if (mode === "network2" || mode === "sell2") conn.invoke("ChoiceReply", 0);
+      mode = "idle"; render(); break;
     case "build": {
       if (needCard()) return;
       buildOpts = await conn.invoke("GetBuildOptions", selCard);
@@ -279,7 +290,12 @@ async function doAction(act) {
       if (!netOpts.length) { $("gameErr").textContent = "No legal links (check money/coal)."; return; }
       mode = "network"; render(); break;
     }
-    case "sell": if (needCard()) return; conn.invoke("Sell", selCard); break;
+    case "sell": {
+      if (needCard()) return;
+      sellOpts = await conn.invoke("GetSellOptions");
+      if (!sellOpts.length) { $("gameErr").textContent = "Nothing sellable (connection/beer)."; return; }
+      mode = "sell"; render(); break;
+    }
     case "develop": {
       if (needCard()) return;
       const opts = await conn.invoke("GetDevelopOptions");
@@ -351,7 +367,7 @@ function draw() {
     } else {
       ctx.fillStyle = "rgba(255,255,255,.25)"; ctx.fill();
     }
-    if (mode === "network" && netOpts.includes(l.id)) {
+    if ((mode === "network" || mode === "network2") && netOpts.includes(l.id)) {
       ctx.strokeStyle = "gold"; ctx.lineWidth = 3.5; ctx.stroke();
     }
   }
@@ -383,6 +399,9 @@ function draw() {
         ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
       }
       if (mode === "build" && buildOpts.some(o => o.loc === loc.name && o.slot === si)) {
+        ctx.strokeStyle = "gold"; ctx.lineWidth = 3.5; ctx.strokeRect(x, y, w, h);
+      }
+      if ((mode === "sell" || mode === "sell2") && sellOpts.some(o => o.loc === loc.name && o.slot === si)) {
         ctx.strokeStyle = "gold"; ctx.lineWidth = 3.5; ctx.strokeRect(x, y, w, h);
       }
     });
@@ -525,13 +544,34 @@ cv.addEventListener("click", e => {
         mode = "idle"; render();
         return;
       }
-  } else if (mode === "network") {
+  } else if (mode === "network" || mode === "network2") {
     for (const l of map.links)
       if (netOpts.includes(l.id) && hit(...linkRect(l))) {
-        conn.invoke("Network", selCard, l.id);
+        if (mode === "network2") conn.invoke("ChoiceReply", netOpts.indexOf(l.id) + 1);
+        else conn.invoke("Network", selCard, l.id);
         mode = "idle"; render();
         return;
       }
+    } else if (mode === "sell" || mode === "sell2") {
+    for (const o of sellOpts) {
+      const loc = map.locations.find(l => l.name === o.loc);
+      const slot = loc.slots[o.slot];
+      if (!hit(...slotRect(slot.x, slot.y))) continue;
+      if (mode === "sell2") {
+        // ponytail: server drives the merchant modal after this; tile pick is the only client choice here
+        conn.invoke("ChoiceReply", o.i + 1);
+      } else {
+        const invoke = mi => conn.invoke("DoSell", selCard, o.i, mi);
+        if (o.merchants.length === 1) invoke(0);
+        else {
+          const labels = o.merchants.map(m => m.label + (m.hasBeer ? " [beer]" : ""));
+          showModal(`Sell to which merchant?`, [...labels, "Cancel"],
+            i => { if (i < labels.length) invoke(i); });
+        }
+      }
+      mode = "idle"; render();
+      return;
+    }
   }
 });
 </script>

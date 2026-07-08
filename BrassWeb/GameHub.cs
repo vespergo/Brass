@@ -320,15 +320,49 @@ public class GameHub : Hub
                 var second = g.NetworkOptions(p, true);
                 if (second.Count > 0)
                 {
-                    int pick = ch.Pick("Build a second rail link? (+£10, +1 coal, +1 beer)",
-                        new[] { "No, stop here" }.Concat(second.Select(l => l.ToString())).ToList());
+                    int pick = PickSecondRail(room, p, second);
                     if (pick > 0) g.ExecNetwork(p, second[pick - 1], true, ch);
                 }
             }
         });
     }
 
-    public Task Sell(int cardIdx)
+    // Second rail link: client renders the candidates on the map ("networkPick" event) and replies
+    // via ChoiceReply. Index 0 = stop, 1..N = second[pick-1]. Same TCS plumbing as WebChooser.Pick.
+    int PickSecondRail(Room room, Player p, List<LinkDef> second)
+    {
+        var conn = room.Seats[p.Index];
+        if (conn == null) return 0;
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        room.PendingChoice = tcs;
+        room.PendingChoiceConn = conn;
+        room.PendingPrompt = "Build a second rail link? (+£10, +1 coal, +1 beer)";
+        room.PendingOptions = new[] { "No, stop here" }.Concat(second.Select(l => l.ToString())).ToList();
+        hubCtx.Clients.Client(conn).SendAsync("networkPick", room.PendingPrompt, second.Select(l => l.Id).ToList());
+        var done = Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromMinutes(2))).GetAwaiter().GetResult();
+        room.PendingChoice = null; room.PendingChoiceConn = null; room.PendingPrompt = null; room.PendingOptions = null;
+        int r = done == tcs.Task ? tcs.Task.Result : 0;
+        return r >= 0 && r <= second.Count ? r : 0;
+    }
+
+    static List<object> SellOptsJson(List<SellableTile> opts) =>
+        opts.Select((s, i) => (object)new
+        {
+            i, loc = s.Tile.Loc, slot = s.Tile.SlotIdx,
+            label = $"{s.Tile.Spec} in {s.Tile.Loc}",
+            merchants = s.Merchants.Select(m => new { label = m.Label, hasBeer = m.HasBeer }).ToList(),
+        }).ToList();
+
+    public Task<List<object>> GetSellOptions()
+    {
+        var t = MyTurn();
+        if (t == null) return Task.FromResult(new List<object>());
+        var (_, g, p) = t.Value;
+        return Task.FromResult(SellOptsJson(g.SellOptions(p)));
+    }
+
+    // First sell is chosen client-side (so Cancel is free); the card is only spent here once a tile is picked.
+    public Task DoSell(int cardIdx, int optIdx, int merchantIdx)
     {
         var t = MyTurn();
         if (t == null) return Task.CompletedTask;
@@ -337,24 +371,43 @@ public class GameHub : Hub
         {
             if (cardIdx < 0 || cardIdx >= p.Hand.Count) return;
             var opts = g.SellOptions(p);
-            if (opts.Count == 0) return;
+            if (optIdx < 0 || optIdx >= opts.Count) return;
+            var s = opts[optIdx];
+            if (merchantIdx < 0 || merchantIdx >= s.Merchants.Count) return;
             var ch = new WebChooser(room, hubCtx, p.Index);
             g.SpendAction(p, p.Hand[cardIdx]);
-            bool first = true;
-            while (opts.Count > 0)
+            g.ExecSell(p, s.Tile, s.Merchants[merchantIdx], ch);
+            // Additional sells re-arm the board (sellPick event) and wait for a tile click or
+            // Cancel, instead of a modal loop. One action still covers every sell; the turn ends
+            // only when the player stops or runs out of sellable tiles.
+            while ((opts = g.SellOptions(p)).Count > 0)
             {
-                var labels = opts.Select(s => $"{s.Tile.Spec} in {s.Tile.Loc}").ToList();
-                int pick = first ? ch.Pick("Sell which tile?", labels)
-                    : ch.Pick("Sell another tile?", new[] { "Stop selling" }.Concat(labels).ToList()) - 1;
-                if (pick < 0) break;
-                var s = opts[pick];
-                var m = s.Merchants.Count == 1 ? s.Merchants[0]
-                    : s.Merchants[ch.Pick("Sell to which merchant?", s.Merchants.Select(x => x.Label + (x.HasBeer ? " [beer]" : "")).ToList())];
-                g.ExecSell(p, s.Tile, m, ch);
-                first = false;
-                opts = g.SellOptions(p);
+                int pick = PickAnotherSell(room, p, opts);
+                if (pick <= 0) break;
+                var x = opts[pick - 1];
+                var m = x.Merchants.Count == 1 ? x.Merchants[0]
+                    : x.Merchants[ch.Pick("Sell to which merchant?", x.Merchants.Select(mm => mm.Label + (mm.HasBeer ? " [beer]" : "")).ToList())];
+                g.ExecSell(p, x.Tile, m, ch);
             }
         });
+    }
+
+    // Re-arms the seller's board with fresh options and waits for a tile click (1..N) or Stop
+    // (0). The live state is sent too so the just-sold tile flips before the next pick.
+    int PickAnotherSell(Room room, Player p, List<SellableTile> opts)
+    {
+        var conn = room.Seats[p.Index];
+        if (conn == null) return 0;
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        room.PendingChoice = tcs;
+        room.PendingChoiceConn = conn;
+        room.PendingPrompt = "Sell another tile?";
+        room.PendingOptions = new[] { "Stop selling" }.Concat(opts.Select(x => $"{x.Tile.Spec} in {x.Tile.Loc}")).ToList();
+        hubCtx.Clients.Client(conn).SendAsync("sellPick", SellOptsJson(opts), StateFor(room, p.Index));
+        var done = Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromMinutes(2))).GetAwaiter().GetResult();
+        room.PendingChoice = null; room.PendingChoiceConn = null; room.PendingPrompt = null; room.PendingOptions = null;
+        int r = done == tcs.Task ? tcs.Task.Result : 0;
+        return r >= 0 && r <= opts.Count ? r : 0;
     }
 
     public Task<List<string>> GetDevelopOptions()
