@@ -41,6 +41,15 @@
   #matModal.open { display: flex; }
   #matBox { background: #26262e; border-radius: 8px; padding: 12px; }
   #matTabs { display: flex; gap: 5px; margin-bottom: 8px; }
+  #scoreModal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 12; }
+  #scoreModal.open { display: flex; }
+  #scoreBox { background: #26262e; border-radius: 8px; padding: 20px; min-width: 380px; max-width: 520px; }
+  #scoreBox h2 { color: #d4b06a; margin-bottom: 14px; font-size: 20px; }
+  #scoreTable { font-family: Consolas, monospace; font-size: 14px; }
+  #scoreTable .row { display: flex; gap: 10px; padding: 6px 4px; border-bottom: 1px solid #333; }
+  #scoreTable .row span { min-width: 30px; }
+  #scoreTable .winner { color: #d4b06a; font-weight: 700; }
+  #btnShowScore { position: fixed; top: 10px; right: 10px; z-index: 11; display: none; }
 </style>
 </head>
 <body>
@@ -94,6 +103,13 @@
   <canvas id="matCanvas" width="800" height="640"></canvas>
 </div></div>
 
+<div id="scoreModal"><div id="scoreBox">
+  <h2>Game Over</h2>
+  <div id="scoreTable"></div>
+  <button id="btnMinimizeScore" style="margin-top:12px;width:100%">Minimize (view board)</button>
+</div></div>
+<button id="btnShowScore">Final Score</button>
+
 <script src="signalr.min.js"></script>
 <script>
 "use strict";
@@ -106,6 +122,7 @@ let mode = "idle";            // idle | build | network | network2 | sell | sell
 let buildOpts = [], netOpts = [], sellOpts = [], selCard = -1;
 let roundKey = null, banner = null; // {round, era, until}
 let wasMyTurn = false, turnBanner = null; // {until}
+let wasGameOver = false, scoreMinimized = false;
 const boardImg = new Image();
 boardImg.src = "img/main_board.jpg";
 boardImg.onload = () => draw();
@@ -193,7 +210,11 @@ $("btnStart").onclick = () => {
   conn.invoke("StartGame", sel);
 };
 
-$("btnLeave").onclick = async () => { await conn.invoke("LeaveGame"); state = null; $("log").innerHTML = ""; };
+$("btnLeave").onclick = async () => {
+  await conn.invoke("LeaveGame"); state = null; $("log").innerHTML = "";
+  wasGameOver = false; scoreMinimized = false;
+  $("scoreModal").classList.remove("open"); $("btnShowScore").style.display = "none";
+};
 
 // ---------- modal ----------
 
@@ -267,8 +288,30 @@ function render() {
   for (const b of document.querySelectorAll("#actions button"))
     b.disabled = !myTurn || (b.dataset.act === "cancel" ? mode === "idle" : mode !== "idle");
   $("btnLeave").style.display = s.gameOver ? "block" : "none";
+
+  if (s.gameOver && !wasGameOver) scoreMinimized = false;
+  wasGameOver = s.gameOver;
+  if (s.gameOver) renderScore(s);
+  $("scoreModal").classList.toggle("open", s.gameOver && !scoreMinimized);
+  $("btnShowScore").style.display = s.gameOver && scoreMinimized ? "block" : "none";
+
   draw();
 }
+
+function renderScore(s) {
+  const ranked = [...s.players].sort((a, b) => b.vp - a.vp || b.income - a.income || b.money - a.money);
+  $("scoreTable").innerHTML = ranked.map((p, i) => `
+    <div class="row${i === 0 ? " winner" : ""}" style="color:${i === 0 ? "" : colors[p.color]}">
+      <span>${i === 0 ? "🏆" : "#" + (i + 1)}</span>
+      <span style="flex:1">${p.name}${i === 0 ? " (Winner!)" : ""}</span>
+      <span>${p.vp} VP</span>
+      <span>inc ${p.income}</span>
+      <span>£${p.money}</span>
+    </div>`).join("");
+}
+
+$("btnMinimizeScore").onclick = () => { scoreMinimized = true; render(); };
+$("btnShowScore").onclick = () => { scoreMinimized = false; render(); };
 
 // ---------- actions ----------
 
