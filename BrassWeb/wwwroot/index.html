@@ -105,6 +105,7 @@ let conn, map, state = null, myName = "";
 let mode = "idle";            // idle | build | network | network2 | sell | sell2
 let buildOpts = [], netOpts = [], sellOpts = [], selCard = -1;
 let roundKey = null, banner = null; // {round, era, until}
+let wasMyTurn = false, turnBanner = null; // {until}
 const boardImg = new Image();
 boardImg.src = "img/main_board.jpg";
 boardImg.onload = () => draw();
@@ -196,13 +197,14 @@ $("btnLeave").onclick = async () => { await conn.invoke("LeaveGame"); state = nu
 
 // ---------- modal ----------
 
-function showModal(prompt, options, cb) {
+function showModal(prompt, options, cb, disabled) {
   $("modalPrompt").textContent = prompt;
   $("modalOpts").innerHTML = "";
   options.forEach((o, i) => {
     const b = document.createElement("button");
     b.textContent = o;
-    b.onclick = () => { $("modal").classList.remove("open"); cb(i); };
+    if (disabled && disabled[i]) b.disabled = true;
+    else b.onclick = () => { $("modal").classList.remove("open"); cb(i); };
     $("modalOpts").appendChild(b);
   });
   $("modal").classList.add("open");
@@ -238,6 +240,11 @@ function render() {
   $("players").appendChild(info);
 
   const myTurn = s.currentIndex === s.you && !s.gameOver;
+  if (myTurn && !wasMyTurn) {
+    turnBanner = { until: Date.now() + 3000 };
+    setTimeout(() => { turnBanner = null; draw(); }, 3000);
+  }
+  wasMyTurn = myTurn;
   $("status").textContent = s.gameOver ? "Game over!" :
     myTurn ? (mode === "build" ? "Click a highlighted slot." :
               mode === "network" ? "Click a highlighted link." :
@@ -426,6 +433,17 @@ function draw() {
 
   if (s) drawTracks(s);
 
+  if (s && selCard >= 0 && selCard < s.hand.length) {
+    const loc = map.locations.find(l => l.name === s.hand[selCard]);
+    if (loc) {
+      ctx.beginPath();
+      ctx.moveTo(loc.x * K - 70 * K, loc.y * K + 10);
+      ctx.lineTo(loc.x * K + 70 * K, loc.y * K + 10);
+      ctx.strokeStyle = "gold"; ctx.lineWidth = 5;
+      ctx.stroke();
+    }
+  }
+
   if (banner && Date.now() < banner.until) {
     const cx = cv.width / 2, cy = cv.height / 2;
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -440,6 +458,17 @@ function draw() {
     ctx.lineWidth = 5;
     ctx.strokeText(`${banner.era} Era`, cx, cy + 24 * K * 2);
     ctx.fillText(`${banner.era} Era`, cx, cy + 24 * K * 2);
+  }
+
+  if (turnBanner && Date.now() < turnBanner.until) {
+    const cx = cv.width / 2, cy = cv.height / 2;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.font = `bold ${56 * K * 2}px Segoe UI`;
+    ctx.lineWidth = 9; ctx.strokeStyle = "black";
+    ctx.strokeText("Your Turn", cx, cy-100);
+    ctx.fillStyle = "white";
+    ctx.fillText("Your Turn", cx, cy-100);
   }
 }
 
@@ -539,9 +568,12 @@ cv.addEventListener("click", e => {
       for (let si = 0; si < loc.slots.length; si++) {
         const opts = buildOpts.filter(o => o.loc === loc.name && o.slot === si);
         if (!opts.length || !hit(...slotRect(loc.slots[si].x, loc.slots[si].y))) continue;
-        if (opts.length === 1) conn.invoke("Build", selCard, opts[0].i);
-        else showModal(`Build what in ${loc.name}?`, [...opts.map(o => o.label), "Cancel"],
-          i => { if (i < opts.length) conn.invoke("Build", selCard, opts[i].i); });
+        const allowed = loc.slots[si].allowed;
+        const rows = allowed.map(ind => opts.find(o => o.ind === ind));
+        const labels = [...rows.map((o, j) => o ? o.label : allowed[j]), "Cancel"];
+        const dis = [...rows.map(o => !o), false];
+        showModal(`Build what in ${loc.name}?`, labels,
+          i => { if (i < rows.length) conn.invoke("Build", selCard, rows[i].i); }, dis);
         mode = "idle"; render();
         return;
       }

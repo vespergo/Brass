@@ -273,7 +273,7 @@ public class GameHub : Hub
         var opts = g.BuildOptions(p, p.Hand[cardIdx]);
         return Task.FromResult(opts.Select((o, i) => (object)new
         {
-            i, loc = o.Loc.Name, slot = o.SlotIdx,
+            i, loc = o.Loc.Name, slot = o.SlotIdx, ind = o.Spec.Ind.ToString(),
             label = $"{o.Spec} (£{o.MoneyCost}{(o.Over != null ? ", overbuild" : "")})",
         }).ToList());
     }
